@@ -2,7 +2,7 @@ name: Daily Spotify Report
 
 on:
   schedule:
-    - cron: "17 22 * * *"
+    - cron: "0 2 * * *"
   workflow_dispatch:
 
 permissions:
