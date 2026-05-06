@@ -1,6 +1,5 @@
 require("dotenv").config();
 const axios = require("axios");
-const fs = require("fs");
 
 const {
   SPOTIFY_CLIENT_ID,
@@ -10,8 +9,6 @@ const {
   TELEGRAM_CHAT_ID,
   SPOTIFY_REFRESH_TOKEN,
 } = process.env;
-
-const STATE_FILE = "state.json";
 
 const USER_NAME_MAP = {
   "1131604223": "Mark",
@@ -37,18 +34,7 @@ function name(id) {
   return USER_NAME_MAP[id] || id;
 }
 
-function loadState() {
-  if (!fs.existsSync(STATE_FILE)) {
-    return { processedDays: {}, totalPenalties: {}, knownUsers: [] };
-  }
-  return JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
-}
-
-function saveState(state) {
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
-}
-
-function berlinDate(date = new Date()) {
+function berlinDate(date) {
   const parts = new Intl.DateTimeFormat("de-DE", {
     timeZone: "Europe/Berlin",
     year: "numeric",
@@ -93,6 +79,7 @@ async function getSongs(token) {
       if (!t || t.type !== "track") continue;
 
       rows.push({
+        rawAddedAt: e.added_at,
         date: new Date(e.added_at),
         user: e.added_by?.id || "unknown",
         track: t.name,
@@ -106,98 +93,58 @@ async function getSongs(token) {
   return rows;
 }
 
-function prepare(rows) {
-  return rows.map(r => ({
+function build(rows) {
+  const enriched = rows.map(r => ({
     ...r,
-    day: berlinDate(r.date)
+    day: berlinDate(r.date),
   }));
-}
 
-function addPenalty(state, user) {
-  if (!state.totalPenalties[user]) state.totalPenalties[user] = 0;
-  state.totalPenalties[user]++;
-}
+  console.log("Zelda Debug:");
+  console.log(
+    enriched
+      .filter(r => r.user === "1129098837")
+      .map(r => ({
+        rawAddedAt: r.rawAddedAt,
+        berlinDay: r.day,
+        track: r.track,
+        artist: r.artist
+      }))
+  );
 
-function processDay(state, day, rows) {
-  const usersToday = new Set(rows.map(r => r.user));
-  const missing = state.knownUsers.filter(u => !usersToday.has(u));
+  const today = berlinDate(new Date());
+  const past = enriched.filter(r => r.day < today);
 
-  const map = {};
-  for (const r of rows) {
+  if (!past.length) return "Noch kein abgeschlossener Tag 🍻";
+
+  const days = [...new Set(past.map(r => r.day))].sort();
+  const lastDay = days.at(-1);
+  const dayRows = past.filter(r => r.day === lastDay);
+
+  const allUsers = [...new Set(past.map(r => r.user))];
+  const usersOnDay = new Set(dayRows.map(r => r.user));
+  const missing = allUsers.filter(u => !usersOnDay.has(u));
+
+  const songMap = {};
+  for (const r of dayRows) {
     const key = `${r.track} - ${r.artist}`.toLowerCase().trim();
-    if (!map[key]) map[key] = [];
-    map[key].push(r.user);
+    if (!songMap[key]) songMap[key] = [];
+    songMap[key].push(r.user);
   }
 
-  const dupes = Object.entries(map).filter(([, users]) => users.length > 1);
-
-  for (const u of missing) addPenalty(state, u);
-
-  for (const [, users] of dupes) {
-    for (const u of [...new Set(users)]) addPenalty(state, u);
-  }
-
-  state.processedDays[day] = {
-    missingUsers: missing,
-    duplicateSongs: dupes.map(([song, users]) => ({
-      song,
-      users: [...new Set(users)]
-    })),
-    processedAt: new Date().toISOString()
-  };
-}
-
-function updateState(rows) {
-  const state = loadState();
-  const today = berlinDate();
-  const data = prepare(rows);
-
-  const allUsers = [...new Set(data.map(r => r.user))];
-  state.knownUsers = [...new Set([...(state.knownUsers || []), ...allUsers])];
-
-  const completedDays = [...new Set(data.map(r => r.day))]
-    .filter(day => day < today)
-    .sort();
-
-  let lastProcessedDay = null;
-
-  for (const day of completedDays) {
-    if (state.processedDays[day]) continue;
-
-    const rowsForDay = data.filter(r => r.day === day);
-    processDay(state, day, rowsForDay);
-    lastProcessedDay = day;
-  }
-
-  saveState(state);
-  return { state, lastProcessedDay };
-}
-
-function buildReport(state, lastProcessedDay) {
-  if (!lastProcessedDay) {
-    return "Hier kommt euer Daily Report 🍻\n\nKein neuer abgeschlossener Tag zum Auswerten.";
-  }
-
-  const dayData = state.processedDays[lastProcessedDay];
+  const dupes = Object.entries(songMap).filter(([, users]) => users.length > 1);
 
   let msg = `Hier kommt euer Daily Report 🍻\n`;
-  msg += `Tag: ${lastProcessedDay}\n\n`;
+  msg += `Tag: ${lastDay}\n\n`;
 
   msg += "Doppelte Songs:\n";
-  msg += dayData.duplicateSongs.length
-    ? dayData.duplicateSongs.map(d => `→ ${d.song} (${d.users.map(name).join(", ")})`).join("\n")
+  msg += dupes.length
+    ? dupes.map(([song, users]) => `→ ${song} (${[...new Set(users)].map(name).join(", ")})`).join("\n")
     : "→ Keine";
 
   msg += "\n\nSongs vergessen:\n";
-  msg += dayData.missingUsers.length
-    ? dayData.missingUsers.map(u => `→ ${name(u)}`).join("\n")
+  msg += missing.length
+    ? missing.map(u => `→ ${name(u)}`).join("\n")
     : "→ Keine";
-
-  msg += "\n\nGesamtstrafen:\n";
-  msg += Object.entries(state.totalPenalties)
-    .sort((a, b) => b[1] - a[1])
-    .map(([user, points]) => `→ ${name(user)}: ${points}`)
-    .join("\n");
 
   return msg;
 }
@@ -213,9 +160,7 @@ async function send(msg) {
   try {
     const token = await getToken();
     const rows = await getSongs(token);
-
-    const { state, lastProcessedDay } = updateState(rows);
-    const report = buildReport(state, lastProcessedDay);
+    const report = build(rows);
 
     console.log(report);
     await send(report);
