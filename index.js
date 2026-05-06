@@ -1,5 +1,6 @@
 require("dotenv").config();
 const axios = require("axios");
+const fs = require("fs");
 
 const {
   SPOTIFY_CLIENT_ID,
@@ -10,8 +11,9 @@ const {
   SPOTIFY_REFRESH_TOKEN,
 } = process.env;
 
-// ===== NAMEN =====
-const USER_NAME_MAP = {   
+const STATE_FILE = "state.json";
+
+const USER_NAME_MAP = {
   "1131604223": "Mark",
   "1180676527": "Ralle",
   "1129098837": "Zelda",
@@ -35,7 +37,17 @@ function name(id) {
   return USER_NAME_MAP[id] || id;
 }
 
-// ===== BERLIN DATUM =====
+function loadState() {
+  if (!fs.existsSync(STATE_FILE)) {
+    return { processedDays: {}, totalPenalties: {}, knownUsers: [] };
+  }
+  return JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+}
+
+function saveState(state) {
+  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+}
+
 function berlinDate(date = new Date()) {
   const parts = new Intl.DateTimeFormat("de-DE", {
     timeZone: "Europe/Berlin",
@@ -44,10 +56,9 @@ function berlinDate(date = new Date()) {
     day: "2-digit",
   }).formatToParts(date);
 
-  return `${parts.find(p=>p.type==="year").value}-${parts.find(p=>p.type==="month").value}-${parts.find(p=>p.type==="day").value}`;
+  return `${parts.find(p => p.type === "year").value}-${parts.find(p => p.type === "month").value}-${parts.find(p => p.type === "day").value}`;
 }
 
-// ===== TOKEN =====
 async function getToken() {
   const auth = Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString("base64");
 
@@ -68,7 +79,6 @@ async function getToken() {
   return res.data.access_token;
 }
 
-// ===== SONGS LADEN =====
 async function getSongs(token) {
   let url = `https://api.spotify.com/v1/playlists/${PLAYLIST_ID}/items?limit=100&market=DE`;
   const rows = [];
@@ -84,7 +94,7 @@ async function getSongs(token) {
 
       rows.push({
         date: new Date(e.added_at),
-        user: e.added_by?.id,
+        user: e.added_by?.id || "unknown",
         track: t.name,
         artist: t.artists.map(a => a.name).join(", "),
       });
@@ -96,60 +106,102 @@ async function getSongs(token) {
   return rows;
 }
 
-// ===== REPORT =====
-function build(rows) {
-  if (!rows.length) return "Keine Songs 🍻";
+function prepare(rows) {
+  return rows.map(r => ({
+    ...r,
+    day: berlinDate(r.date)
+  }));
+}
 
-  const today = berlinDate();
+function addPenalty(state, user) {
+  if (!state.totalPenalties[user]) state.totalPenalties[user] = 0;
+  state.totalPenalties[user]++;
+}
 
-  const enriched = rows.map(r => {
-    const d = new Date(r.date);
-    d.setHours(d.getHours() + 2);
-    return { ...r, day: d.toISOString().slice(0,10) };
-  });
+function processDay(state, day, rows) {
+  const usersToday = new Set(rows.map(r => r.user));
+  const missing = state.knownUsers.filter(u => !usersToday.has(u));
 
-  // nur abgeschlossene Tage
-  const past = enriched.filter(r => r.day < today);
-
-  if (!past.length) return "Noch kein abgeschlossener Tag 🍻";
-
-  const days = [...new Set(past.map(r => r.day))].sort();
-  const lastDay = days.at(-1);
-
-  const dayRows = past.filter(r => r.day === lastDay);
-
-  const allUsers = [...new Set(enriched.map(r => r.user))];
-
-  const usersToday = new Set(dayRows.map(r => r.user));
-  const missing = allUsers.filter(u => !usersToday.has(u));
-
-  // duplicates
   const map = {};
-  for (const r of dayRows) {
-    const key = (r.track + r.artist).toLowerCase();
+  for (const r of rows) {
+    const key = `${r.track} - ${r.artist}`.toLowerCase().trim();
     if (!map[key]) map[key] = [];
     map[key].push(r.user);
   }
 
-  const dupes = Object.entries(map).filter(([,u]) => u.length > 1);
+  const dupes = Object.entries(map).filter(([, users]) => users.length > 1);
+
+  for (const u of missing) addPenalty(state, u);
+
+  for (const [, users] of dupes) {
+    for (const u of [...new Set(users)]) addPenalty(state, u);
+  }
+
+  state.processedDays[day] = {
+    missingUsers: missing,
+    duplicateSongs: dupes.map(([song, users]) => ({
+      song,
+      users: [...new Set(users)]
+    })),
+    processedAt: new Date().toISOString()
+  };
+}
+
+function updateState(rows) {
+  const state = loadState();
+  const today = berlinDate();
+  const data = prepare(rows);
+
+  const allUsers = [...new Set(data.map(r => r.user))];
+  state.knownUsers = [...new Set([...(state.knownUsers || []), ...allUsers])];
+
+  const completedDays = [...new Set(data.map(r => r.day))]
+    .filter(day => day < today)
+    .sort();
+
+  let lastProcessedDay = null;
+
+  for (const day of completedDays) {
+    if (state.processedDays[day]) continue;
+
+    const rowsForDay = data.filter(r => r.day === day);
+    processDay(state, day, rowsForDay);
+    lastProcessedDay = day;
+  }
+
+  saveState(state);
+  return { state, lastProcessedDay };
+}
+
+function buildReport(state, lastProcessedDay) {
+  if (!lastProcessedDay) {
+    return "Hier kommt euer Daily Report 🍻\n\nKein neuer abgeschlossener Tag zum Auswerten.";
+  }
+
+  const dayData = state.processedDays[lastProcessedDay];
 
   let msg = `Hier kommt euer Daily Report 🍻\n`;
-  msg += `Tag: ${lastDay}\n\n`;
+  msg += `Tag: ${lastProcessedDay}\n\n`;
 
   msg += "Doppelte Songs:\n";
-  msg += dupes.length
-    ? dupes.map(([s,u]) => `→ ${s} (${[...new Set(u)].map(name).join(", ")})`).join("\n")
+  msg += dayData.duplicateSongs.length
+    ? dayData.duplicateSongs.map(d => `→ ${d.song} (${d.users.map(name).join(", ")})`).join("\n")
     : "→ Keine";
 
   msg += "\n\nSongs vergessen:\n";
-  msg += missing.length
-    ? missing.map(u => `→ ${name(u)}`).join("\n")
+  msg += dayData.missingUsers.length
+    ? dayData.missingUsers.map(u => `→ ${name(u)}`).join("\n")
     : "→ Keine";
+
+  msg += "\n\nGesamtstrafen:\n";
+  msg += Object.entries(state.totalPenalties)
+    .sort((a, b) => b[1] - a[1])
+    .map(([user, points]) => `→ ${name(user)}: ${points}`)
+    .join("\n");
 
   return msg;
 }
 
-// ===== TELEGRAM =====
 async function send(msg) {
   await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
     chat_id: TELEGRAM_CHAT_ID,
@@ -157,12 +209,13 @@ async function send(msg) {
   });
 }
 
-// ===== MAIN =====
 (async () => {
   try {
     const token = await getToken();
     const rows = await getSongs(token);
-    const report = build(rows);
+
+    const { state, lastProcessedDay } = updateState(rows);
+    const report = buildReport(state, lastProcessedDay);
 
     console.log(report);
     await send(report);
