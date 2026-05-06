@@ -1,5 +1,66 @@
 {
-  "processedDays": {},
-  "totalPenalties": {},
-  "knownUsers": []
+  "processedDays": {
+    "2026-05-01": {
+      "missingUsers": [
+        "1129098837",
+        "31cblyq4jtttrnfatc47o326glky"
+      ],
+      "duplicateSongs": [],
+      "processedAt": "2026-05-06T19:22:14.538Z"
+    },
+    "2026-05-02": {
+      "missingUsers": [
+        "tobsn_s",
+        "11142368883",
+        "31cblyq4jtttrnfatc47o326glky"
+      ],
+      "duplicateSongs": [],
+      "processedAt": "2026-05-06T19:22:14.539Z"
+    },
+    "2026-05-03": {
+      "missingUsers": [
+        "31cblyq4jtttrnfatc47o326glky"
+      ],
+      "duplicateSongs": [],
+      "processedAt": "2026-05-06T19:22:14.539Z"
+    },
+    "2026-05-04": {
+      "missingUsers": [],
+      "duplicateSongs": [],
+      "processedAt": "2026-05-06T19:22:14.539Z"
+    },
+    "2026-05-05": {
+      "missingUsers": [
+        "1129098837",
+        "31cblyq4jtttrnfatc47o326glky"
+      ],
+      "duplicateSongs": [],
+      "processedAt": "2026-05-06T19:22:14.539Z"
+    }
+  },
+  "totalPenalties": {
+    "1129098837": 2,
+    "31cblyq4jtttrnfatc47o326glky": 4,
+    "tobsn_s": 1,
+    "11142368883": 1
+  },
+  "knownUsers": [
+    "1180676527",
+    "wc4ojpn802i3epoyfav9i904f",
+    "katja.becker98",
+    "mc68u1hjk832a59fdjcbkj8qp",
+    "tobsn_s",
+    "1131604223",
+    "soeren.hellstern",
+    "31orh3wjg725krazo5ee5okm2s64",
+    "maximilian.kardinal",
+    "11142368883",
+    "agi7ator",
+    "1149851307",
+    "hanni229",
+    "31sbs7b4z22qnyld4t44jcrroi34",
+    "317fs6s37yjgxd75wnv665enupsy",
+    "1129098837",
+    "31cblyq4jtttrnfatc47o326glky"
+  ]
 }
